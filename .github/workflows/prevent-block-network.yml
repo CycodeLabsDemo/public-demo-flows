@@ -1,0 +1,39 @@
+# Prevent-mode demo: outbound network policy.
+#
+# Dispatches an outbound `curl` to a host outside the allowlist.
+# cimon's hardening agent terminates the process; the workflow fails.
+# This is the intended outcome — the failed-red run is the
+# demonstration. The cimon job summary on the run shows what was
+# blocked.
+
+name: Prevent — Network policy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  blocked-network:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cycodelabs/cimon-action@v1
+        with:
+          client-id: ${{ secrets.CIMON_CLIENT_ID }}
+          secret:    ${{ secrets.CIMON_SECRET }}
+          hardening: true
+          prevent:   true
+          allowed-hosts: >
+            github.com
+            api.github.com
+            objects.githubusercontent.com
+            cycode.com
+            api.cycode.com
+          fail-on-error: true
+
+      - uses: actions/checkout@v4
+
+      - name: Outbound call to a non-allowlisted host
+        run: |
+          curl -sS --max-time 10 https://evil.com > /dev/null

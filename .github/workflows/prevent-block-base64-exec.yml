@@ -1,0 +1,38 @@
+# Prevent-mode demo: base64-decoded payload exec.
+#
+# Dispatches a step that decodes a base64 string and pipes the result
+# into a shell. cimon's hardening agent terminates the process; the
+# workflow fails. The cimon job summary on the run shows what was
+# blocked.
+
+name: Prevent — Base64-decoded payload
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  blocked-base64-exec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: cycodelabs/cimon-action@v1
+        with:
+          client-id: ${{ secrets.CIMON_CLIENT_ID }}
+          secret:    ${{ secrets.CIMON_SECRET }}
+          hardening: true
+          prevent:   true
+          fail-on-error: true
+
+      - uses: actions/checkout@v4
+
+      - name: Run a base64-decoded payload
+        run: |
+          # Decoded payload is intentionally benign (`sleep 5`); the
+          # block fires on the decode-into-shell pattern, regardless
+          # of what the decoded content does. The decoded `sleep`
+          # keeps the shell alive long enough for the termination
+          # signal to land — fast payloads (`echo`) can complete
+          # before the signal arrives.
+          sh -c 'echo "c2xlZXAgNQo=" | base64 -d | bash'

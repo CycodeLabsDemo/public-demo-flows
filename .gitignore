@@ -1,0 +1,13 @@
+# Go build artifacts
+*.exe
+*.test
+*.out
+
+# cimon attest outputs
+provenance.intoto.jsonl
+provenance.intoto.jsonl.sig
+cert.pem
+
+# OS / editor
+.DS_Store
+*.swp

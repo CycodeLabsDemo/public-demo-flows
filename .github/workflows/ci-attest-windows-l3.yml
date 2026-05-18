@@ -1,0 +1,99 @@
+# SLSA Build Level 3 attestation on a GitHub-hosted Windows runner.
+#
+# This workflow demonstrates the customer-facing path for generating SLSA
+# Provenance v1 attestations on Windows using cimon v1.0.17:
+#
+#   1. Build the artifact natively on `windows-latest` — a hardened,
+#      ephemeral, GitHub-managed VM. This *is* the SLSA L3 build platform.
+#   2. Run cimon attest via the cycodelabs/cimon-action/attest action with
+#      `keyless: true`. The action transparently installs cimon.exe from
+#      cimon-releases on Windows. Cimon signs the in-toto Statement with
+#      a short-lived Fulcio cert issued from the workflow's OIDC identity
+#      and logs the entry to Rekor. Hardened platform + service-issued
+#      identity + transparency log = SLSA L3.
+#   3. Verify the signed envelope with `cimon.exe attest verify` to prove
+#      the round-trip works for any downstream consumer.
+#
+# Why L3 without actions/attest-build-provenance: the Sigstore trust chain
+# (Fulcio cert bound to GitHub OIDC + Rekor inclusion) anchored on a
+# GitHub-hosted runner already satisfies the SLSA L3 build-platform
+# requirements. actions/attest-build-provenance is a parallel anchor, not
+# a prerequisite, and it requires a paid org tier or a public repo.
+
+name: CI Attest Windows (SLSA L3)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # OIDC token for the runner — Fulcio binds the short-lived cert to this
+  # workflow's identity, which is the L3 hook.
+  id-token: write
+
+jobs:
+  build-and-attest:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # Build from the windows-l3-attestation/ subdir so each demo flow in
+      # this repo lives in its own folder with its own go.mod. The resulting
+      # binary is dropped at the repo root so cimon attest's subjects path
+      # stays simple ("cimon-demo-simple-app.exe").
+      - name: Build Windows binary
+        shell: pwsh
+        working-directory: windows-l3-attestation
+        run: |
+          go build -o ../cimon-demo-simple-app.exe .
+          "Built: cimon-demo-simple-app.exe ($((Get-FileHash ../cimon-demo-simple-app.exe -Algorithm SHA256).Hash))"
+
+      # Cimon attest — installs cimon.exe from the latest cimon-releases tag
+      # (v1.0.17 as of this writing), generates the SLSA Provenance v1
+      # in-toto Statement, keyless-signs it via public Sigstore
+      # (Fulcio + Rekor), and uploads the record to the Cycode backend.
+      - name: Cimon attest
+        uses: cycodelabs/cimon-action/attest@v1
+        with:
+          client-id: ${{ secrets.CIMON_CLIENT_ID }}
+          secret:    ${{ secrets.CIMON_SECRET }}
+          subjects:  cimon-demo-simple-app.exe
+          keyless:   true
+          allow-submit-data-to-public-sigstore: true
+          report-job-summary: true
+          report-artifact: true
+
+      # Round-trip verification: any downstream consumer can do the same.
+      # As of cimon-action v1.0.1, the attest action puts cimon.exe on
+      # PATH (and exports CIMON_PATH + a cimon-path step output) so this
+      # step doesn't need to know where the per-job install dir lives.
+      # As of cimon v1.0.17, sign and verify defaults are aligned for
+      # keyless mode — no --ignore-timestamp needed.
+      - name: Verify signed cimon provenance
+        shell: pwsh
+        env:
+          CIMON_CLIENT_ID: ${{ secrets.CIMON_CLIENT_ID }}
+          CIMON_SECRET:    ${{ secrets.CIMON_SECRET }}
+        run: |
+          cimon.exe attest verify `
+            --client-id       $env:CIMON_CLIENT_ID `
+            --secret          $env:CIMON_SECRET `
+            --subjects        cimon-demo-simple-app.exe `
+            --signed-prov     provenance.intoto.jsonl.sig `
+            --keyless
+
+      - name: Upload attestation bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-attestation-bundle
+          path: |
+            cimon-demo-simple-app.exe
+            provenance.intoto.jsonl
+            provenance.intoto.jsonl.sig
+            cert.pem

@@ -1,0 +1,127 @@
+# SLSA Build Level 3 attestation on a GitHub-hosted Windows runner —
+# direct cimon.exe path (no cycodelabs/cimon-action wrapper).
+#
+# This workflow produces an identical signed envelope to
+# ci-attest-windows-l3.yml. The only difference is how cimon.exe gets onto
+# the runner: here we Invoke-WebRequest a pinned cimon-releases zip
+# ourselves instead of letting the action download it. Use this path when:
+#
+#   - You're behind a corporate proxy that intercepts marketplace action
+#     downloads or rewrites release-zip URLs (the manual download honors
+#     HTTPS_PROXY but stays one TLS hop, easier to debug).
+#   - You want a specific, pinned cimon.exe version that does not change
+#     when a new release ships (the action installs whatever is latest at
+#     job start).
+#   - You want to keep third-party actions out of the workflow surface
+#     entirely (supply-chain hygiene).
+#
+# Trust chain, output format, and SLSA level are unchanged — both
+# workflows hit the same Fulcio + Rekor + Cycode endpoints with the same
+# OIDC token and produce the same in-toto Statement.
+
+name: CI Attest Windows (SLSA L3, direct cimon.exe)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # OIDC token for the runner — Fulcio binds the short-lived cert to this
+  # workflow's identity. This is the L3 hook.
+  id-token: write
+
+env:
+  # Pin to a specific cimon release. Bump this when adopting a new
+  # version; reproducibility is the whole point of pinning vs. tracking
+  # latest. See https://github.com/cycodelabs/cimon-releases/releases
+  # for available tags.
+  CIMON_VERSION: v1.0.17
+
+jobs:
+  build-and-attest:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # Build from the windows-l3-attestation/ subdir so each demo flow in
+      # this repo lives in its own folder with its own go.mod. The resulting
+      # binary is dropped at the repo root so cimon attest's subjects path
+      # stays simple ("cimon-demo-simple-app.exe").
+      - name: Build Windows binary
+        shell: pwsh
+        working-directory: windows-l3-attestation
+        run: |
+          go build -o ../cimon-demo-simple-app.exe .
+          "Built: cimon-demo-simple-app.exe ($((Get-FileHash ../cimon-demo-simple-app.exe -Algorithm SHA256).Hash))"
+
+      # Install cimon.exe manually from cimon-releases. The action does
+      # the same thing internally; the only difference is we control the
+      # exact tag here. We unzip into RUNNER_TEMP\cimon\ to match the
+      # action's layout so downstream steps are interchangeable.
+      - name: Install cimon.exe
+        shell: pwsh
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'cimon'
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          $zipUrl  = "https://github.com/cycodelabs/cimon-releases/releases/download/$env:CIMON_VERSION/cimon_windows_x86_64.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP 'cimon.zip'
+          Write-Host "Downloading $zipUrl"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $installDir -Force
+          $exe = Join-Path $installDir 'cimon.exe'
+          if (-not (Test-Path $exe)) {
+            throw "cimon.exe not found at $exe after extracting $zipUrl"
+          }
+          "Installed cimon.exe $env:CIMON_VERSION at $exe"
+          # Make cimon.exe available to subsequent steps via PATH.
+          Add-Content -Path $env:GITHUB_PATH -Value $installDir
+
+      # Sign — same call the action emits, just spelled out. Compare line
+      # for line with the `Cimon attest` step in ci-attest-windows-l3.yml:
+      # every input there maps to a CLI flag here.
+      - name: Cimon attest generate-and-sign
+        shell: pwsh
+        env:
+          CIMON_CLIENT_ID: ${{ secrets.CIMON_CLIENT_ID }}
+          CIMON_SECRET:    ${{ secrets.CIMON_SECRET }}
+        run: |
+          cimon.exe attest generate-and-sign `
+            --client-id           $env:CIMON_CLIENT_ID `
+            --secret              $env:CIMON_SECRET `
+            --subjects            cimon-demo-simple-app.exe `
+            --keyless `
+            --yes `
+            --report-job-summary `
+            --report-artifact
+
+      # Round-trip verification — identical to the action-based workflow.
+      # As of cimon v1.0.17, sign and verify defaults are aligned for
+      # keyless mode — no --ignore-timestamp needed.
+      - name: Verify signed cimon provenance
+        shell: pwsh
+        env:
+          CIMON_CLIENT_ID: ${{ secrets.CIMON_CLIENT_ID }}
+          CIMON_SECRET:    ${{ secrets.CIMON_SECRET }}
+        run: |
+          cimon.exe attest verify `
+            --client-id       $env:CIMON_CLIENT_ID `
+            --secret          $env:CIMON_SECRET `
+            --subjects        cimon-demo-simple-app.exe `
+            --signed-prov     provenance.intoto.jsonl.sig `
+            --keyless
+
+      - name: Upload attestation bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-attestation-bundle-direct-exe
+          path: |
+            cimon-demo-simple-app.exe
+            provenance.intoto.jsonl
+            provenance.intoto.jsonl.sig
+            cert.pem
