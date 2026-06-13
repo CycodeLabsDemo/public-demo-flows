@@ -41,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
 
       # Build from the windows-l3-attestation/ subdir so each demo flow in
       # this repo lives in its own folder with its own go.mod. The resulting
