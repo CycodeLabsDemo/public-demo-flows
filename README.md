@@ -18,6 +18,12 @@ Three dispatch-only workflows. Each is expected to fail red — that's the demon
 - [`prevent-block-base64-exec.yml`](.github/workflows/prevent-block-base64-exec.yml) — base64-decoded payload piped into a shell.
 - [`prevent-block-secret-read.yml`](.github/workflows/prevent-block-secret-read.yml) — two-phase chain: extract a fake value from a sibling process, then attempt an outbound call.
 
+### Cluster-mode (Kubernetes)
+
+For self-hosted runners on Kubernetes, cimon can be deployed once at the cluster level, so workflows need no cimon step at all. See the [cluster-level deployment guide](https://docs.cimon.build/agent/overview/kubernetes-cluster-mode).
+
+- [`cluster-mode-block.yml`](.github/workflows/cluster-mode-block.yml): no cimon step; runs on a cimon-protected cluster's self-hosted runner, where the risky step is stopped from the node. Requires a cluster running cimon (see the guide above), so it does not run on GitHub-hosted runners like the flows above.
+
 ## Running
 
 Set two repository secrets:

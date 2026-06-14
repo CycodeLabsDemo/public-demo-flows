@@ -1,0 +1,34 @@
+# Cluster-mode demo: protection with no cimon step in the workflow.
+#
+# Unlike the other prevent-mode flows in this repo, this workflow contains no
+# cimon-action and no cimon configuration at all. It runs on a self-hosted
+# runner on a Kubernetes cluster where cimon is deployed once at the cluster
+# level, as a node-level DaemonSet. The risky step is stopped from the node, so
+# the workflow fails red and cimon records the block in the run summary.
+#
+# Prerequisite: a cluster running cimon in prevent mode with self-hosted
+# runners. See the cluster-level deployment guide:
+# https://docs.cimon.build/agent/overview/kubernetes-cluster-mode
+#
+# No CIMON_CLIENT_ID / CIMON_SECRET are needed in this workflow; the cluster
+# deployment holds the credentials and reports centrally.
+
+name: Cluster mode — blocked (no cimon in workflow)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  blocked-on-cluster:
+    # Runs on your cluster's self-hosted runner. Set this to your runner scale
+    # set's label (for Actions Runner Controller, the scale set name).
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Outbound call to a non-allowlisted host
+        run: |
+          curl -sS --max-time 15 https://evil.com > /dev/null
