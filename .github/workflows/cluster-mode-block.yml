@@ -13,7 +13,7 @@
 # No CIMON_CLIENT_ID / CIMON_SECRET are needed in this workflow; the cluster
 # deployment holds the credentials and reports centrally.
 
-name: Cluster mode — blocked (no cimon in workflow)
+name: Cluster mode - blocked (no cimon in workflow)
 
 on:
   workflow_dispatch:
